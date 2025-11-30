@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>A3横 POP 画像合成ツール（ローカル処理）</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 16px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 20px;
+      margin-bottom: 4px;
+    }
+    p.desc {
+      font-size: 13px;
+      color: #555;
+      margin-top: 0;
+      margin-bottom: 12px;
+    }
+    .panel {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    label {
+      display: block;
+      margin-bottom: 4px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    input[type="file"] {
+      margin-bottom: 8px;
+    }
+    .preview-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .preview {
+      flex: 1;
+      min-height: 100px;
+      border: 1px dashed #ccc;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      color: #777;
+      background: #fafafa;
+    }
+    img.preview-img {
+      max-width: 100%;
+      max-height: 180px;
+      object-fit: contain;
+    }
+    button {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button.primary {
+      background: #1976d2;
+      color: #fff;
+    }
+    button.primary:disabled {
+      background: #aaa;
+      cursor: not-allowed;
+    }
+    #status {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #555;
+    }
+    .note {
+      font-size: 11px;
+      color: #777;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>A3横 POP 画像合成ツール（JPEG出力／ブラウザ内のみ処理）</h1>
+  <p class="desc">
+    左右の縦POP画像を読み込み、A3横キャンバスに自動で収めて横並びに合成します。<br>
+    合成処理は<span style="font-weight:bold;">すべてお使いのブラウザ内だけ</span>で行われ、画像データはサーバーには送信されません。
+  </p>
+
+  <div class="panel">
+    <div>
+      <label>画像①（左側に配置）</label>
+      <input type="file" id="file1" accept="image/*">
+    </div>
+
+    <div>
+      <label>画像②（右側に配置）</label>
+      <input type="file" id="file2" accept="image/*">
+    </div>
+
+    <div class="preview-row">
+      <div class="preview" id="preview1">画像① プレビュー</div>
+      <div class="preview" id="preview2">画像② プレビュー</div>
+    </div>
+
+    <div style="margin-top: 12px;">
+      <button id="mergeBtn" class="primary" disabled>
+        A3横で合成して JPEG をダウンロード
+      </button>
+      <div class="note">
+        ※ 出力サイズの目安：A3横 約 4961×3508px（300dpi相当） / JPEG形式
+      </div>
+    </div>
+
+    <div id="status"></div>
+  </div>
+
+  <!-- 非表示キャンバス：ブラウザ内でだけ使用 -->
+  <canvas id="canvas" style="display:none;"></canvas>
+
+  <script>
+    // A3横 300dpi相当のピクセルサイズ目安
+    const A3_WIDTH  = 4961;
+    const A3_HEIGHT = 3508;
+
+    const file1Input = document.getElementById('file1');
+    const file2Input = document.getElementById('file2');
+    const preview1   = document.getElementById('preview1');
+    const preview2   = document.getElementById('preview2');
+    const mergeBtn   = document.getElementById('mergeBtn');
+    const statusEl   = document.getElementById('status');
+    const canvas     = document.getElementById('canvas');
+    const ctx        = canvas.getContext('2d');
+
+    let img1DataUrl = null;
+    let img2DataUrl = null;
+
+    file1Input.addEventListener('change', handleFileChange);
+    file2Input.addEventListener('change', handleFileChange);
+    mergeBtn.addEventListener('click', handleMerge);
+
+    function handleFileChange() {
+      const file1 = file1Input.files[0];
+      const file2 = file2Input.files[0];
+
+      updatePreview(preview1, file1, (dataUrl) => img1DataUrl = dataUrl);
+      updatePreview(preview2, file2, (dataUrl) => img2DataUrl = dataUrl);
+
+      mergeBtn.disabled = !(file1 && file2);
+      statusEl.textContent = '';
+    }
+
+    function updatePreview(container, file, onLoaded) {
+      container.innerHTML = '';
+      if (!file) {
+        container.textContent = '画像未選択';
+        return;
+      }
+      if (!file.type.startsWith('image/')) {
+        container.textContent = '画像ファイルを選択してください';
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const dataUrl = e.target.result;
+        const img = document.createElement('img');
+        img.src = dataUrl;
+        img.className = 'preview-img';
+        container.appendChild(img);
+        if (onLoaded) onLoaded(dataUrl);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function handleMerge() {
+      if (!img1DataUrl || !img2DataUrl) return;
+
+      try {
+        mergeBtn.disabled = true;
+        statusEl.textContent = '合成中… 少しお待ちください。';
+
+        const [img1, img2] = await Promise.all([
+          loadImage(img1DataUrl),
+          loadImage(img2DataUrl)
+        ]);
+
+        // キャンバスをA3横サイズに
+        canvas.width  = A3_WIDTH;
+        canvas.height = A3_HEIGHT;
+
+        // 背景を白で塗る（印刷で透過トラブル防止）
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, A3_WIDTH, A3_HEIGHT);
+
+        // 左右に画像を描画
+        drawSideBySide(img1, img2);
+
+        // JPEGで出力
+        const quality = 0.92; // 0〜1（画質優先）
+        canvas.toBlob(function(blob) {
+          const url = URL.createObjectURL(blob);
+          downloadBlob(url);
+          URL.revokeObjectURL(url);
+          statusEl.textContent = '合成完了！JPEGをダウンロードしました。';
+        }, 'image/jpeg', quality);
+
+      } catch (e) {
+        console.error(e);
+        statusEl.textContent = 'エラーが発生しました。もう一度お試しください。';
+      } finally {
+        mergeBtn.disabled = !(file1Input.files[0] && file2Input.files[0]);
+      }
+    }
+
+    function loadImage(dataUrl) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+    }
+
+    function drawSideBySide(img1, img2) {
+      const halfWidth = A3_WIDTH / 2;
+
+      // 左右それぞれに収まるようスケーリング
+      const leftFit  = calcFit(img1.width, img1.height, halfWidth, A3_HEIGHT);
+      const rightFit = calcFit(img2.width, img2.height, halfWidth, A3_HEIGHT);
+
+      // 左画像：右端を中央線に合わせる
+      const leftX = halfWidth - leftFit.w;
+      const leftY = (A3_HEIGHT - leftFit.h) / 2;
+
+      // 右画像：左端を中央線に合わせる
+      const rightX = halfWidth;
+      const rightY = (A3_HEIGHT - rightFit.h) / 2;
+
+      ctx.drawImage(img1, leftX,  leftY,  leftFit.w,  leftFit.h);
+      ctx.drawImage(img2, rightX, rightY, rightFit.w, rightFit.h);
+    }
+
+    function calcFit(origW, origH, maxW, maxH) {
+      const scale = Math.min(maxW / origW, maxH / origH);
+      return {
+        w: origW * scale,
+        h: origH * scale
+      };
+    }
+
+    function downloadBlob(url) {
+      const a = document.createElement('a');
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+
+      a.href = url;
+      a.download = `POP_A3横_${y}${m}${d}_${hh}${mm}${ss}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  </script>
+</body>
+</html>
