@@ -1,4 +1,4 @@
-![MergeWorks タイトル画像](https://raw.githubusercontent.com/sk569ppups/MergeWorks/main/images/title.png)
+![MergeWorks タイトル画像](./images/title.png)
 
 # MergeWorks  
 A3横サイズ｜画像2枚を自動合成するブラウザツール
